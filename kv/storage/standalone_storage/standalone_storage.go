@@ -56,8 +56,11 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 }
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
-	wb := s.batchPool.Get().(engine_util.WriteBatch)
-	defer s.batchPool.Put(wb)
+	wb := s.batchPool.Get().(*engine_util.WriteBatch)
+	defer func() {
+		wb.Reset()
+		s.batchPool.Put(wb)
+	}()
 
 	for _, entry := range batch {
 		wb.SetCF(entry.Cf(), entry.Key(), entry.Value())
@@ -71,7 +74,15 @@ type standaloneStorageReader struct {
 }
 
 func (r *standaloneStorageReader) GetCF(cf string, key []byte) ([]byte, error) {
-	return engine_util.GetCFFromTxn(r.tx, cf, key)
+	v, err := engine_util.GetCFFromTxn(r.tx, cf, key)
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return v, nil
 }
 
 func (r *standaloneStorageReader) IterCF(cf string) engine_util.DBIterator {
