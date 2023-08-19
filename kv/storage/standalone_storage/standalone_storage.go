@@ -8,20 +8,23 @@ import (
 	"github.com/pingcap-incubator/tinykv/log"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
 	"github.com/sirupsen/logrus"
+	"sync"
 )
 
 // StandAloneStorage is an implementation of `Storage` for a single-node TinyKV instance. It does not
 // communicate with other nodes and all data is stored locally.
 type StandAloneStorage struct {
-	db     *badger.DB
-	conf   *config.Config
-	logger *logrus.Logger
+	db        *badger.DB
+	batchPool *sync.Pool
+	conf      *config.Config
+	logger    *logrus.Logger
 }
 
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
 	sas := StandAloneStorage{
-		conf:   conf,
-		logger: logrus.New(),
+		conf:      conf,
+		batchPool: &sync.Pool{New: func() interface{} { return new(engine_util.WriteBatch) }},
+		logger:    logrus.New(),
 	}
 
 	opts := badger.DefaultOptions
@@ -53,7 +56,9 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 }
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
-	wb := new(engine_util.WriteBatch)
+	wb := s.batchPool.Get().(engine_util.WriteBatch)
+	defer s.batchPool.Put(wb)
+
 	for _, entry := range batch {
 		wb.SetCF(entry.Cf(), entry.Key(), entry.Value())
 	}
